@@ -12,7 +12,7 @@ It receives data from the mobile IoT application, persists business state, enfor
 
 SecureDelivery monitors delivery quality and cargo integrity.
 
-The MVP uses a smartphone mounted horizontally on a SmartBox as the primary IoT device.
+The MVP uses a smartphone mounted horizontally on the delivery box as the primary IoT implementation of a Device.
 
 The mobile application:
 
@@ -28,6 +28,8 @@ The server must assume mobile connectivity is unreliable.
 Temperature monitoring is outside the MVP.
 
 Full route tracking is outside the MVP.
+
+`Device` is the canonical technical term. `SmartBox` is the product-facing Dashboard label.
 
 ---
 
@@ -50,6 +52,20 @@ The backend remains a modular monolith in the MVP.
 
 ---
 
+## Engineering Practice Boundary
+
+This architecture document defines SecureDelivery-specific boundaries and decisions.
+
+Framework-level implementation guidance is defined in the repository `AGENTS.md`.
+
+Human developers should also follow:
+
+- `docs/development-guide.pt-BR.md`
+- `docs/git-workflow.pt-BR.md`
+
+Implementations should remain idiomatic to NestJS, TypeScript, PostgreSQL, Redis and BullMQ and should prefer official/framework-native solutions over unnecessary custom abstractions.
+
+
 ## 4. Architectural Style
 
 ```text
@@ -65,8 +81,8 @@ Auth
 RBAC
 Users
 Customers
-SmartBoxes
-SmartBoxActivation
+Devices
+DeviceActivation
 Deliveries
 Telemetry
 Events
@@ -103,7 +119,7 @@ The architecture should favor explicit ownership and low coupling.
 │ NestJS                      │
 │ Auth / RBAC                 │
 │ Customers                   │
-│ SmartBoxes                  │
+│ Devices                  │
 │ Deliveries                  │
 │ Telemetry                   │
 │ Events                      │
@@ -195,8 +211,8 @@ Can manage:
 
 - Customers
 - Administrators within allowed policy
-- SmartBoxes
-- SmartBox operational visibility
+- Devices
+- Device operational visibility
 - support tickets
 - ticket ownership
 - customer support interactions
@@ -215,7 +231,7 @@ Customer isolation is a server invariant.
 
 Tenant-owned resources include, at minimum:
 
-- SmartBoxes
+- Devices
 - deliveries
 - telemetry
 - events
@@ -227,15 +243,15 @@ Frontend filtering is not an authorization mechanism.
 
 ---
 
-## 9. SmartBox Domain
+## 9. Device Domain
 
-`SmartBox` is a logical domain entity.
+`Device` is a logical domain entity.
 
-The SmartBox represents the monitored delivery container.
+The Device represents the monitored delivery container.
 
 In the MVP, the attached IoT device is a smartphone.
 
-The SmartBox model should not depend on mobile-specific implementation details.
+The Device model should not depend on mobile-specific implementation details.
 
 Suggested conceptual attributes may include:
 
@@ -260,7 +276,7 @@ The final persistence model should be derived from implementation needs rather t
 
 ---
 
-## 10. SmartBox Lifecycle
+## 10. Device Lifecycle
 
 Suggested logical lifecycle:
 
@@ -276,16 +292,16 @@ INACTIVE
 
 Soft deletion may exist separately for historical retention.
 
-A SmartBox with historical deliveries, events or telemetry should not be destructively removed without an explicit retention decision.
+A Device with historical deliveries, events or telemetry should not be destructively removed without an explicit retention decision.
 
 ---
 
 ## 11. QR Activation Flow
 
 ```text
-Administrator creates SmartBox
+Administrator creates Device
             ↓
-SmartBox enters pending activation
+Device enters pending activation
             ↓
 Mobile application exposes QR Code
             ↓
@@ -295,7 +311,7 @@ Server validates activation token
             ↓
 Customer association is persisted
             ↓
-SmartBox becomes active
+Device becomes active
 ```
 
 Activation tokens should have an explicit lifecycle.
@@ -306,66 +322,146 @@ Avoid exposing raw internal IDs as activation credentials.
 
 ## 12. Telemetry Model
 
-The mobile application samples sensors every second.
+SecureDelivery uses lean normal telemetry.
 
-The mobile application initially batches telemetry every minute.
+The Device performs high-frequency motion acquisition locally.
 
-The server receives logical telemetry batches rather than requiring one network request per sensor sample.
+Initial profile:
+
+```text
+Raw IMU:                      50 Hz, Device-local
+GPS / ground speed:           up to 1 Hz, Device-local
+normal Server telemetry:      one-minute period summaries
+network batch:                normally every minute
+event evidence:               high-frequency around relevant events
+```
+
+Normal telemetry does not contain the continuous raw IMU stream.
 
 Conceptually:
 
 ```text
 TelemetryBatch
- ├── telemetryBatchId
- ├── SmartBox
- ├── delivery
- ├── startedAt
- ├── finishedAt
- ├── samples[]
- └── receivedAt
+ ├── schemaVersion
+ ├── batchId
+ ├── monitoringSessionId
+ └── periods[]
+      ├── periodStartedAt
+      ├── periodFinishedAt
+      ├── deviceState
+      ├── lastLocation
+      └── observations[]
 ```
 
-This is conceptual and may evolve.
+MVP navigation summary observations:
 
----
+```text
+navigation.distance.traveled
+navigation.moving.duration
+navigation.stopped.duration
+navigation.speed.maximum
+```
+
+Average moving speed is derived from accumulated distance and moving duration.
+
+Unknown valid Observation keys remain accepted.
+
+## Shared Device Protocol
+
+Canonical contracts are defined under the workspace:
+
+```text
+../docs/contracts/
+```
+
+The protocol separates:
+
+### Platform-understood metadata
+
+- Device identity
+- monitoring session
+- timestamps
+- location
+- battery
+- connectivity
+- monitoring status
+
+### Extensible sensor observations
+
+Generic namespaced:
+
+```text
+key + value + optional unit
+```
+
+### Extensible Device-generated events
+
+Open namespaced `eventType` strings inside a stable common envelope.
+
+This allows new sensors and event detectors to be deployed on Devices without requiring corresponding server contract changes.
+
+Generic ingestion must accept unknown valid observation keys and unknown valid event types.
 
 ## 13. Telemetry Ingestion
 
-The ingestion path must assume:
-
-- retries
-- duplicates
-- delayed batches
-- out-of-order batches
-- connectivity gaps
-
-Conceptual flow:
+Endpoint family:
 
 ```text
-Mobile Local Storage
-        ↓
-Sync Attempt
-        ↓
-Telemetry API
-        ↓
-Authentication / Authorization
-        ↓
-Validation
-        ↓
-Idempotency Check / Constraint
-        ↓
-PostgreSQL Persistence
-        ↓
-Optional Async Processing
-        ↓
-BullMQ
-        ↓
-Realtime / KPI / Alert Updates
+POST /api/v1/devices/{deviceId}/telemetry/batches
 ```
 
-The synchronous path should remain as small as practical while still guaranteeing correctness.
+Ingestion responsibilities:
 
----
+1. authenticate Device/request;
+2. validate the shared versioned envelope;
+3. validate Device/session relationship;
+4. enforce `batchId` idempotency;
+5. persist compact telemetry period summaries;
+6. update operational Device state where appropriate;
+7. update latest valid location;
+8. derive/index KPI data when justified;
+9. schedule asynchronous downstream work when needed.
+
+Do not reject a valid batch because it contains a new valid Observation key.
+
+Do not require raw normal accelerometer/gyroscope samples.
+
+Offline Devices may send multiple pending period summaries in a single batch.
+
+## Navigation and Speed Analytics
+
+Speed is an MVP operational signal.
+
+Preferred source is Device-reported GNSS/operating-system ground speed, summarized before ingestion.
+
+The Server stores/derives sufficient data for:
+
+- monitored distance;
+- moving duration;
+- stopped duration;
+- average moving speed;
+- maximum speed;
+- events per 100 km;
+- event correlation by speed range.
+
+Canonical derivation:
+
+```text
+average moving speed = total distance / total moving duration
+```
+
+Do not average one-minute speed averages.
+
+Motion events may contain:
+
+```text
+navigation.speed.at_event
+navigation.speed.average_5s_before
+navigation.speed.maximum_10s_before
+navigation.moving
+```
+
+These attributes are contextual/correlational and must not automatically be interpreted as causal proof.
 
 ## 14. Idempotency
 
@@ -374,7 +470,7 @@ Telemetry batches and events require stable client-generated identifiers.
 Examples:
 
 ```text
-telemetryBatchId
+batchId
 eventId
 ```
 
@@ -390,14 +486,16 @@ A lost HTTP response after successful persistence must not cause duplicate data 
 
 Events are detected on the mobile device.
 
-Initial event categories may include:
+Initial Device-generated event types include:
 
 ```text
-STRONG_IMPACT
-CRITICAL_INCLINATION
-POSSIBLE_FALL
-ABNORMAL_MOVEMENT
+motion.strong_impact
+motion.critical_inclination
+motion.possible_fall
+motion.abnormal_movement
 ```
+
+`eventType` is an open namespaced string and must not become a closed server enum.
 
 An event should preserve enough evidence to explain why it was detected.
 
@@ -406,7 +504,7 @@ Conceptually:
 ```text
 Event
  ├── eventId
- ├── SmartBox
+ ├── Device
  ├── delivery
  ├── type
  ├── occurredAt
@@ -451,7 +549,7 @@ Likely persistent domains include:
 - users
 - roles
 - customers
-- SmartBoxes
+- Devices
 - activation state
 - deliveries
 - telemetry
@@ -502,7 +600,7 @@ WebSocket supports realtime dashboard behavior.
 
 Potential channels include:
 
-- SmartBox status
+- Device status
 - new events
 - connectivity changes
 - support chat
@@ -534,7 +632,7 @@ Ticket messages must be persisted before or as part of reliable realtime publica
 
 ## 22. Device Health
 
-The server should expose operational health information for SmartBoxes.
+The server should expose operational health information for Devices.
 
 Possible fields include:
 
@@ -556,7 +654,7 @@ The MVP does not reconstruct routes.
 
 Location is used for:
 
-- latest known SmartBox position
+- latest known Device position
 - event-associated position
 
 The dashboard may generate external Google Maps links using stored coordinates.
@@ -574,9 +672,9 @@ Examples:
 - role changes
 - password resets
 - user activation/deactivation
-- SmartBox activation
-- SmartBox reassignment
-- SmartBox deactivation/deletion
+- Device activation
+- Device reassignment
+- Device deactivation/deletion
 - support ownership changes
 
 Audit design should avoid storing secrets.
@@ -591,7 +689,7 @@ The backend must validate:
 - device authentication
 - role authorization
 - Customer ownership
-- SmartBox ownership
+- Device ownership
 - activation token validity
 - payload structure
 
@@ -638,15 +736,15 @@ docs/decisions/
 Recommended initial ADR topics:
 
 - Smartphone as MVP IoT Device
-- SmartBox as Logical Domain Entity
+- Device as Logical Domain Entity
 - On-Device Event Detection
 - Offline Store-and-Forward
 - Idempotent Telemetry and Event Ingestion
 - Modular Monolith Backend
 - Redis and BullMQ in the MVP
-- QR-Based SmartBox Activation
+- QR-Based Device Activation
 - No Full Route Tracking in MVP
-- Soft Deletion for Historical SmartBoxes
+- Soft Deletion for Historical Devices
 
 ---
 
@@ -664,3 +762,13 @@ The MVP server does not need to implement:
 - machine learning
 - microservices
 - Kubernetes
+
+## Shared Integration References
+
+Cross-repository behavior is defined in:
+
+- `../../docs/contracts/domain-model.md`
+- `../../docs/contracts/integration-flows.md`
+- `../../docs/contracts/kpis.md`
+- `../../docs/contracts/openapi.yaml`
+- `../../docs/contracts/asyncapi.yaml`

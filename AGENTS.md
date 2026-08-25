@@ -8,7 +8,7 @@ It does not replace the project architecture documentation.
 
 Before changing code, agents must understand both:
 
-- `../project.md` or the repository-local project context if copied here
+- `../docs/project.md`
 - `docs/architecture.md`
 
 The project context explains what SecureDelivery is.
@@ -23,7 +23,7 @@ This file defines how agents should operate within those boundaries.
 
 SecureDelivery is a delivery-quality monitoring platform.
 
-The MVP uses a smartphone mounted horizontally on a SmartBox as the primary IoT device.
+The MVP uses a smartphone mounted horizontally on the delivery box as the primary IoT implementation of a Device.
 
 The mobile application performs sensor collection, local event detection, durable local storage, batching and store-and-forward synchronization.
 
@@ -31,7 +31,7 @@ The server is the central source of truth.
 
 The MVP does not include temperature monitoring, dedicated ESP32 hardware, Iridium or full route tracking.
 
-`SmartBox` is a logical domain entity and must not be coupled to the smartphone implementation.
+`Device` is the canonical technical domain entity. `SmartBox` is only a product-facing UI label.
 
 ---
 
@@ -55,6 +55,36 @@ The backend should begin as a modular monolith.
 Do not introduce microservices only because the system may scale later.
 
 ---
+
+## Shared Contract Policy
+
+Before implementing or changing communication between repositories, read:
+
+- `../docs/contracts/README.md`
+- `../docs/contracts/openapi.yaml`
+- `../docs/contracts/asyncapi.yaml` when realtime is involved
+- relevant contract documentation under `../docs/contracts/`
+- shared ADRs under `../docs/decisions/`
+
+The contracts under `../docs/contracts/` are authoritative.
+
+Do not invent, duplicate or silently modify cross-repository payloads.
+
+When changing a shared contract:
+
+1. update the canonical contract first;
+2. evaluate backward compatibility;
+3. update the server implementation;
+4. regenerate/update typed clients when generation is configured;
+5. update affected consumers;
+6. update tests;
+7. update architecture documentation and ADRs when required.
+
+`Device` is the canonical technical term.
+
+Do not use `SmartBox` in API paths, backend DTOs, persistence entities or cross-repository contract schemas.
+
+`SmartBox` is a product-facing UI label only.
 
 ## Agent Workflow
 
@@ -97,7 +127,7 @@ Create or update an ADR when a change affects topics such as:
 - BullMQ usage
 - realtime communication
 - event processing
-- SmartBox lifecycle
+- Device lifecycle
 - activation strategy
 - external integration strategy
 
@@ -123,8 +153,8 @@ Expected domains include:
 - RBAC
 - Users
 - Customers
-- SmartBoxes
-- SmartBoxActivation
+- Devices
+- DeviceActivation
 - Deliveries
 - Telemetry
 - Events
@@ -190,9 +220,9 @@ Can manage:
 
 - Customers
 - Administrators according to RBAC rules
-- SmartBoxes
-- SmartBox operations
-- SmartBox monitoring
+- Devices
+- Device operations
+- Device monitoring
 - support tickets
 
 ### CUSTOMER
@@ -205,23 +235,23 @@ Never rely on frontend filtering for tenant isolation.
 
 ---
 
-## SmartBox Rules
+## Device Rules
 
-`SmartBox` is a logical domain entity.
+`Device` is a logical domain entity.
 
 It must not depend on the implementation details of the mobile app.
 
 The smartphone is only the MVP IoT device implementation.
 
-SmartBox historical traceability should be preserved.
+Device historical traceability should be preserved.
 
-Prefer soft deletion or historical deactivation instead of destructive deletion when records already reference the SmartBox.
+Prefer soft deletion or historical deactivation instead of destructive deletion when records already reference the Device.
 
-Do not silently delete telemetry, events or delivery history when a SmartBox is removed from active use.
+Do not silently delete telemetry, events or delivery history when a Device is removed from active use.
 
 ---
 
-## SmartBox Activation
+## Device Activation
 
 QR-based activation should use a secure activation mechanism.
 
@@ -237,31 +267,67 @@ The implementation should support:
 - activation timestamp
 - invalid/expired token handling
 
-Do not allow arbitrary Customers to claim SmartBoxes without authorization and token validation.
+Do not allow arbitrary Customers to claim Devices without authorization and token validation.
 
 ---
 
 ## Telemetry Ingestion
 
-Mobile connectivity is unreliable.
+The Server receives compact, idempotent telemetry batches.
 
-Assume telemetry may:
+Normal telemetry is period-summary based, initially one minute.
 
-- arrive late
-- arrive more than once
-- arrive out of order
-- arrive in batches
-- be retried after a timeout
+Do not require continuous normal raw accelerometer/gyroscope samples.
 
-Telemetry ingestion must be idempotent.
+Normal period summaries should support:
 
-Use stable client-generated identifiers such as `telemetryBatchId`.
+- Device operational state;
+- latest valid location;
+- distance traveled;
+- moving duration;
+- stopped duration;
+- maximum speed;
+- future generic business-value observations.
 
-Preserve device timestamps separately from server ingestion timestamps when relevant.
+The Server derives average moving speed using accumulated distance and moving duration.
 
-Do not use request arrival time as a substitute for event occurrence time.
+The Server must preserve original Device timestamps and batch idempotency.
 
----
+High-frequency raw motion samples belong primarily to event evidence.
+
+## Navigation and Speed KPI Rules
+
+Speed is an MVP operational signal.
+
+Canonical stored summary observations:
+
+```text
+navigation.distance.traveled
+navigation.moving.duration
+navigation.stopped.duration
+navigation.speed.maximum
+```
+
+Do not calculate delivery average speed as an unweighted average of period averages.
+
+Use:
+
+```text
+average moving speed = sum(distance) / sum(moving duration)
+```
+
+Motion event attributes may include:
+
+```text
+navigation.speed.at_event
+navigation.speed.average_5s_before
+navigation.speed.maximum_10s_before
+navigation.moving
+```
+
+These values support correlation analysis.
+
+Do not present correlation as proven causality in server-generated analytics or APIs.
 
 ## Event Ingestion
 
@@ -278,6 +344,64 @@ Events should preserve their associated evidence.
 Do not reduce an event to only an event type if the mobile payload includes audit evidence.
 
 ---
+
+## Extensible Telemetry Contract
+
+Telemetry ingestion must validate the generic versioned envelope defined in `../docs/contracts/telemetry.md`.
+
+Sensor measurements are generic observations:
+
+```json
+{
+  "key": "motion.orientation.pitch",
+  "value": 42.7,
+  "unit": "deg"
+}
+```
+
+Do not introduce sensor-specific shared DTO fields such as:
+
+- `accelerometerX`
+- `accelerometerY`
+- `temperature`
+- `humidity`
+
+The server must not reject a valid telemetry batch merely because an observation key is unknown.
+
+Known observation keys may receive specialized indexing or processing without making generic ingestion depend on that knowledge.
+
+## Extensible Device Event Contract
+
+Device-generated event types are open namespaced strings.
+
+Examples:
+
+```text
+motion.strong_impact
+motion.critical_inclination
+motion.possible_fall
+motion.abnormal_movement
+```
+
+Do not implement Device-generated event types as a closed backend enum.
+
+The server validates and persists the common envelope:
+
+- eventId
+- monitoringSessionId
+- eventType
+- severity
+- occurredAt
+- location
+- detector
+- attributes
+- evidence
+
+The server must not reject an event only because `eventType` is unknown.
+
+`severity` remains a closed platform enum.
+
+The Device owns event-detection algorithms; the server does not need to understand or re-run them.
 
 ## Idempotency
 
@@ -307,7 +431,7 @@ Index intentionally around real query patterns.
 Likely index candidates include:
 
 - customerId
-- smartBoxId
+- deviceId
 - deliveryId
 - telemetry timestamp
 - event timestamp
@@ -361,7 +485,7 @@ Queues must not obscure transaction boundaries or make correctness harder withou
 WebSocket can support:
 
 - dashboard realtime updates
-- SmartBox operational status updates
+- Device operational status updates
 - event updates
 - support ticket chat
 
@@ -393,7 +517,7 @@ The MVP does not implement full route tracking.
 
 The server stores only location data needed by current product requirements, such as:
 
-- latest known SmartBox location
+- latest known Device location
 - event-associated location
 
 Avoid adding complete route reconstruction unless explicitly requested.
@@ -411,8 +535,8 @@ Examples include:
 - role changes
 - password resets
 - user activation/deactivation
-- SmartBox activation
-- SmartBox reassignment
+- Device activation
+- Device reassignment
 - support ownership changes
 - destructive or soft-delete operations
 
@@ -477,7 +601,7 @@ Prioritize automated tests for:
 
 - RBAC
 - tenant isolation
-- SmartBox activation
+- Device activation
 - telemetry idempotency
 - event idempotency
 - duplicate retry scenarios
@@ -550,6 +674,121 @@ Do not implement unless explicitly requested:
 - Kubernetes
 
 ---
+
+## Technology Best Practices
+
+Follow official NestJS, TypeScript, PostgreSQL, Redis and BullMQ conventions and established ecosystem best practices.
+
+Before introducing a custom abstraction, verify whether the framework or platform already provides an idiomatic solution.
+
+Do not blindly apply patterns from unrelated frameworks.
+
+Prefer simple, explicit and framework-native solutions unless the documented SecureDelivery architecture requires otherwise.
+
+---
+
+## NestJS Engineering Guidelines
+
+- Keep controllers thin.
+- Controllers must not contain business logic.
+- Use NestJS modules to represent clear domain or application boundaries.
+- Avoid circular module dependencies.
+- Do not use `forwardRef()` as a default fix for poor boundaries.
+- Use DTOs for external request boundaries.
+- Validate untrusted input consistently.
+- Do not expose persistence entities directly as public API contracts.
+- Keep domain decisions separate from infrastructure concerns.
+- Prefer dependency injection through explicit contracts.
+- Avoid giant services with unrelated responsibilities.
+- Keep side effects explicit.
+- Use transactions when multiple persistent writes must succeed atomically.
+- Keep queue producers and processors focused and observable.
+- Prefer configuration through validated environment configuration instead of scattered `process.env` reads.
+- Centralize cross-cutting concerns such as logging, exception mapping and authentication rather than duplicating them across modules.
+- Use guards, interceptors, pipes and filters for their intended NestJS responsibilities instead of embedding those concerns into controllers.
+- Keep API contracts predictable and version consciously when breaking changes become necessary.
+
+---
+
+## PostgreSQL and Persistence Guidelines
+
+- Use migrations for every schema change.
+- Never depend on undocumented manual production database modifications.
+- Enforce critical invariants with database constraints.
+- Use unique constraints for idempotency where appropriate.
+- Add indexes based on real access patterns.
+- Avoid N+1 query patterns.
+- Avoid unbounded queries, especially for telemetry, events, tickets and audit data.
+- Use pagination for collections that may grow.
+- Preserve historical records unless an explicit retention decision permits deletion.
+- Use transactions intentionally, keeping them as short as practical.
+- Do not store derived cache-like state as the only authoritative copy of business data.
+- Review query plans and indexes before speculative database redesign.
+
+---
+
+## Redis Guidelines
+
+- Redis is not the authoritative persistent database.
+- Use Redis for BullMQ, transient coordination, caching and ephemeral realtime infrastructure where justified.
+- Do not store irreplaceable business state only in Redis.
+- Use explicit TTLs for cache entries where stale data is possible.
+- Avoid introducing cache complexity without evidence that it is needed.
+- Cache invalidation rules must be explicit and testable.
+
+---
+
+## BullMQ Guidelines
+
+- Queue jobs must be idempotent whenever they may be retried.
+- Assume a worker can execute the same logical job more than once.
+- Use stable job identifiers where duplicate scheduling would be harmful.
+- Configure retry and backoff intentionally.
+- Keep queue payloads minimal and prefer identifiers over copying large authoritative business objects.
+- Do not store authoritative business state only inside job payloads.
+- Do not enqueue work that must participate in the same ACID transaction unless the architecture explicitly handles the boundary.
+- Log failures with enough contextual identifiers for investigation.
+- Distinguish retryable failures from permanent failures.
+- Keep workers independently testable from controllers.
+- Do not route every operation through a queue just because BullMQ is available.
+
+---
+
+## Realtime Guidelines
+
+- WebSocket messages are realtime signals, not persistent truth.
+- Persist authoritative state before or as part of a reliable publication flow.
+- Clients must be able to reconcile state through regular APIs.
+- Do not assume every WebSocket frame is received exactly once.
+- Authenticate and authorize socket connections and sensitive realtime channels.
+- Design realtime events with stable names and typed payload contracts.
+
+---
+
+## Testing Strategy
+
+Prefer:
+
+- unit tests for isolated domain and application rules;
+- integration tests for PostgreSQL repositories, Redis/BullMQ integration and infrastructure boundaries;
+- e2e tests for critical API, authentication, authorization and tenant-isolation flows.
+
+Prioritize tests for behavior that would create data corruption, authorization bypass, duplicated telemetry/events or broken operational flows.
+
+Mocks should not hide important integration risks.
+
+Use real infrastructure in integration/e2e environments when practical, especially for database constraints and queue semantics.
+
+---
+
+## Human Developer Documentation
+
+Human developers should also read:
+
+- `docs/development-guide.pt-BR.md`
+- `docs/git-workflow.pt-BR.md`
+
+These files define practical development conventions and the Git/GitHub workflow for the repository.
 
 ## Completion Criteria
 
