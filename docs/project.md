@@ -165,6 +165,8 @@ CUSTOMER
 
 Authorization must be enforced by the backend.
 
+Human users authenticate separately from Devices. Human APIs use user bearer credentials and enforce RBAC plus Customer ownership. Device synchronization uses a Device bearer credential scoped to one `deviceId`.
+
 The dashboard may hide or disable actions according to permissions, but frontend behavior must never be considered a security boundary.
 
 ---
@@ -252,6 +254,8 @@ Tenant isolation must be guaranteed by the backend.
 
 A Customer must never be able to access SmartBoxes, deliveries, events, tickets or users belonging to another Customer.
 
+SmartBox requests are represented technically as tenant-scoped `DeviceRequest` resources. A pending request is explicitly fulfilled by an authorized Administrator with an eligible `deviceId`, or cancelled by an authorized actor with a reason. Terminal transitions are immutable and auditable.
+
 ---
 
 # Device Lifecycle
@@ -302,7 +306,11 @@ The QR Code should not simply expose an internal Device identifier.
 
 Prefer a secure activation token with an explicit lifecycle and expiration strategy.
 
+Activation material is accepted only in JSON request bodies, never in URL paths or query strings, and is redacted from logs, traces and errors. A QR web link may carry it in the URL fragment for local client capture.
+
 The exact token design may evolve.
+
+After Customer confirmation, the Device exchanges short-lived activation material once for a Device credential, stores it securely and uses it separately from human authentication.
 
 ---
 
@@ -396,6 +404,8 @@ When monitoring is enabled:
 - telemetry is persisted locally
 - synchronization runs according to policy
 - critical events are persisted immediately
+
+Before monitoring starts, the Device generates the canonical `monitoringSessionId`. It remains stable across session creation, telemetry, events, stop synchronization and retries, including fully offline operation. The stop request preserves Device-observed `finishedAt`.
 
 ---
 
@@ -556,11 +566,13 @@ The Device observes GPS/speed at up to 1 Hz but normally sends only one-minute a
 Canonical normal telemetry metrics:
 
 ```text
-navigation.distance.traveled   [m]
-navigation.moving.duration     [s]
-navigation.stopped.duration    [s]
-navigation.speed.maximum       [m/s]
+navigation.distanceTraveledMeters          [m]
+navigation.movingDurationSeconds           [s]
+navigation.stoppedDurationSeconds          [s]
+navigation.maximumSpeedMetersPerSecond     [m/s]
 ```
+
+Telemetry schema version 3 adds `navigation.status` and `navigation.source`. Available metrics are nonnegative numbers; unavailable metrics are `null`, never a fabricated zero. Only reliable numeric values contribute to KPIs.
 
 The Server derives:
 
@@ -674,6 +686,8 @@ Administrators can assume a ticket conversation and interact with the Customer i
 The exact chat transport may be implemented through WebSocket.
 
 Persistent message history must not depend on WebSocket delivery.
+
+Ticket message history and persisted Notifications are recoverable through HTTP; WebSocket messages are realtime signals only. Ticket resolve and close are explicit actions.
 
 ---
 
@@ -813,6 +827,8 @@ The branch strategy may use GitFlow or another strategy agreed by the team.
 
 Do not silently introduce a different team workflow.
 
+Product delivery uses a hybrid process inspired by Scrum with continuous Kanban flow in Trello. It has no Daily Scrum or mandatory daily status report. The main integrated meeting occurs approximately every two weeks; help, blockers and decisions are coordinated asynchronously and recorded on the relevant card or canonical document.
+
 ---
 
 # Repository Development Documentation
@@ -842,6 +858,7 @@ The MVP should focus on:
 - administrator management
 - Device management (displayed as SmartBox in the UI)
 - QR-based Device activation (displayed as SmartBox activation)
+- Device requests (displayed as SmartBox requests)
 - mobile IoT monitoring
 - 50 Hz raw IMU sampling with configurable rates
 - on-Device event detection
@@ -858,6 +875,7 @@ The MVP should focus on:
 - connectivity
 - health
 - support tickets
+- notifications
 - realtime support chat
 - monitoring dashboard
 - event visualization

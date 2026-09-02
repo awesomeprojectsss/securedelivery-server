@@ -318,6 +318,8 @@ Activation tokens should have an explicit lifecycle.
 
 Avoid exposing raw internal IDs as activation credentials.
 
+The validate, confirm and credential-exchange endpoints accept activation material only in JSON request bodies. It must not appear in paths or query strings and must be redacted from logs, traces and errors. After Customer confirmation, the Device exchanges it once for a bearer credential scoped to that Device. Device credentials are separate from user sessions and are stored securely by Mobile.
+
 ---
 
 ## 12. Telemetry Model
@@ -350,17 +352,20 @@ TelemetryBatch
       ├── periodFinishedAt
       ├── deviceState
       ├── lastLocation
+      ├── navigation
       └── observations[]
 ```
 
-MVP navigation summary observations:
+MVP structured navigation summary fields:
 
 ```text
-navigation.distance.traveled
-navigation.moving.duration
-navigation.stopped.duration
-navigation.speed.maximum
+navigation.distanceTraveledMeters
+navigation.movingDurationSeconds
+navigation.stoppedDurationSeconds
+navigation.maximumSpeedMetersPerSecond
 ```
+
+Telemetry schema version 3 includes `navigation.status` and `navigation.source`. A valid summary has all numeric metrics, a partial summary has at least one reliable numeric metric, and an unavailable summary has only null metrics. Unknown values are never stored as zero.
 
 Average moving speed is derived from accumulated distance and moving duration.
 
@@ -427,6 +432,8 @@ Do not reject a valid batch because it contains a new valid Observation key.
 Do not require raw normal accelerometer/gyroscope samples.
 
 Offline Devices may send multiple pending period summaries in a single batch.
+
+The Device generates `monitoringSessionId` before monitoring starts. MonitoringSession creation is idempotent, the same identifier relates every dependent record, and stop reconciliation accepts the Device-observed `finishedAt`.
 
 ## Navigation and Speed Analytics
 
@@ -610,6 +617,8 @@ Persistent correctness must not depend on receiving every WebSocket message.
 
 Clients should be able to recover authoritative state through regular APIs.
 
+Socket connections authenticate human users and every publication is authorized by RBAC and Customer ownership.
+
 ---
 
 ## 21. Support Tickets
@@ -625,8 +634,15 @@ A ticket supports:
 - Administrator takeover
 - realtime conversation
 - resolution
+- closure
 
 Ticket messages must be persisted before or as part of reliable realtime publication.
+
+Paginated HTTP message history is authoritative after reconnect. Persisted Notifications are likewise recoverable and markable as read through HTTP.
+
+## Device Requests
+
+`DeviceRequest` is the tenant-scoped technical resource behind the SmartBox Request UI. Only `PENDING` requests transition: an `ADMIN` or `SUPER_ADMIN` explicitly fulfills one with an eligible `deviceId`, while the owning `CUSTOMER` or an authorized Administrator explicitly cancels one with a reason. The Server records terminal timestamps and audit facts atomically. This does not introduce billing, inventory or shipment tracking.
 
 ---
 
