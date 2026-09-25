@@ -1,21 +1,72 @@
 // use prisma-8
 
-model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  username  String?
-  name      String?
-  posts     Post[]
-  createdAt TimestamptzString @default(now())
-  updatedAt temporal.updatedAtString()
+enum UserRole {
+  @@type("pg/text@1")
+  SUPER_ADMIN = "SUPER_ADMIN"
+  ADMIN       = "ADMIN"
+  CUSTOMER    = "CUSTOMER"
 }
 
-model Post {
-  id        Int      @id @default(autoincrement())
-  title     String
-  content   String?
-  author    User     @relation(fields: [authorId], references: [id])
-  authorId  Int
+enum UserStatus {
+  @@type("pg/text@1")
+  ACTIVE   = "ACTIVE"
+  INACTIVE = "INACTIVE"
+}
+
+enum CustomerStatus {
+  @@type("pg/text@1")
+  ACTIVE   = "ACTIVE"
+  INACTIVE = "INACTIVE"
+}
+
+enum Theme {
+  @@type("pg/text@1")
+  LIGHT  = "LIGHT"
+  DARK   = "DARK"
+  SYSTEM = "SYSTEM"
+}
+
+model User {
+  id                 Uuid        @id @default(uuid())
+  name               String
+  email              String      @unique
+  passwordHash       String
+  role               UserRole
+  customerId         Uuid?
+  status             UserStatus  @default(ACTIVE)
+  mustChangePassword Boolean     @default(false)
+  theme              Theme       @default(SYSTEM)
+  customer            Customer?   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  sessions            AuthSession[]
+  createdAt          TimestamptzString @default(now())
+  updatedAt          temporal.updatedAtString()
+
+  @@index([customerId])
+  @@map("users")
+}
+
+model Customer {
+  id        Uuid           @id @default(uuid())
+  name      String
+  status    CustomerStatus @default(ACTIVE)
+  users     User[]
   createdAt TimestamptzString @default(now())
   updatedAt temporal.updatedAtString()
+
+  @@map("customers")
+}
+
+model AuthSession {
+  id               Uuid        @id @default(uuid())
+  userId           Uuid
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String      @unique
+  expiresAt        TimestamptzString
+  revokedAt        TimestamptzString?
+  lastUsedAt       TimestamptzString?
+  createdAt        TimestamptzString @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
 }
