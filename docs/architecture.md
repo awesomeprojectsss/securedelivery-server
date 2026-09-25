@@ -711,6 +711,19 @@ The backend must validate:
 
 Clients are never trusted by default.
 
+### Human Authentication
+
+`POST /api/v1/auth/login` follows the canonical OpenAPI contract. It returns a
+short-lived human access token and an explicit refresh token; the Server stores
+only the refresh-token digest. Authentication failures use one generic response
+for unknown, invalid, inactive and incorrectly scoped accounts. Customer users
+can authenticate only while both the user and owning Customer are active.
+
+Human access tokens identify their persisted session. Once authentication
+guards are implemented, they must check session revocation and expiry in
+addition to validating the token signature. Device credentials remain a
+separate authentication context under the shared ADRs.
+
 ---
 
 ## 26. Scalability Direction

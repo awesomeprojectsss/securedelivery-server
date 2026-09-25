@@ -4,6 +4,10 @@ Store meaningful architectural decisions in this directory using ADR files.
 
 Accepted decisions must not be silently changed. If a decision is replaced, create a new ADR and mark the previous ADR as superseded.
 
+Server-specific implementation decisions belong in this directory. Decisions
+that change contracts or behavior shared with Mobile or Dashboard belong in the
+workspace-level `../docs/decisions/` directory.
+
 ## Relação com outros documentos
 
 - `../architecture.md` descreve o estado atual da arquitetura.
